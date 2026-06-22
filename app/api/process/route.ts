@@ -10,11 +10,17 @@ function isAddressIncomplete(addr: string): boolean {
   return !/[동로길]/.test(addr);
 }
 
-async function callClaude(prompt: string): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractJSON(text: string) {
+  const m = text.match(/\{[\s\S]*?\}/);
+  if (!m) return null;
+  try { return JSON.parse(m[0]); } catch { return null; }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callHaiku(prompt: string): Promise<string> {
   const msg = await (client.messages.create as any)({
-    model: "claude-sonnet-4-6",
-    max_tokens: 1024,
+    model: "claude-haiku-4-5-20251001", // ← Haiku로 변경 (비용 ~1/5)
+    max_tokens: 512,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{ role: "user", content: prompt }],
   });
@@ -23,58 +29,54 @@ async function callClaude(prompt: string): Promise<string> {
     .replace(/```json|```/g, "").trim();
 }
 
-function extractJSON(text: string) {
-  const m = text.match(/\{[\s\S]*?\}/);
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
-}
-
 export async function POST(req: NextRequest) {
   const { companyName } = await req.json();
   if (!companyName) return NextResponse.json({ error: "companyName 필요" }, { status: 400 });
 
   const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  // 1차 조회: 비즈노 + 나이스 + 채용
-  const prompt1 = `한국 스타트업 "${companyName}"의 정보를 조회해주세요.
-
-[1] 본사 주소 (동/로/길 단위까지):
- - 1순위: https://bizno.net/?query=${encodeURIComponent(companyName)}&gb=1 → 본사/본점 기준
- - 2순위: https://www.niceamc.co.kr 검색
- - 반드시 동/로/길 단위까지 포함
-
-[2] 최근 1년(${oneYearAgo} 이후) 채용 공고 수:
- - 사람인: https://www.saramin.co.kr/zf_user/search/recruit?searchword=${encodeURIComponent(companyName)}&recruitPage=1&recruitPageCount=100
- - 원티드: https://www.wanted.co.kr/search?query=${encodeURIComponent(companyName)}&tab=job
- - 두 사이트 합산, 동일 제목 1건
-
-JSON만 반환:
-{"address":"서울 강남구 테헤란로 OO","hire_count":5,"source":"bizno"}`;
-
   try {
-    const text1 = await callClaude(prompt1);
-    const result1 = extractJSON(text1);
+    // ── STEP 1: 사람인 채용 먼저 검색 ──
+    // 채용 0건이면 즉시 삭제 처리, 이후 주소 검색 불필요
+    const saraminText = await callHaiku(
+      `사람인에서 "${companyName}" 기업의 최근 1년(${oneYearAgo} 이후) 채용 공고 수를 확인하세요.
+URL: https://www.saramin.co.kr/zf_user/search/recruit?searchword=${encodeURIComponent(companyName)}&recruitPage=1&recruitPageCount=100
+공고 제목 목록을 확인하고 중복 제목 제거 후 카운트하세요.
+JSON만 반환: {"hire_count":5}`
+    );
+    const saraminResult = extractJSON(saraminText);
+    const hireCount = typeof saraminResult?.hire_count === "number" ? saraminResult.hire_count : 0;
 
-    let address = result1?.address?.trim() || "";
-    let normalizedAddr = address ? normalizeAddr(address) : "";
-    const hireCount = typeof result1?.hire_count === "number" ? result1.hire_count : 0;
-    let source = result1?.source || "not_found";
-
-    // 2차: 주소 불완전하면 구글 검색
-    if (isAddressIncomplete(normalizedAddr)) {
-      try {
-        const text2 = await callClaude(
-          `구글에서 "${companyName} 본사 주소"를 검색해서 정확한 도로명 주소(동/로/길 포함)를 찾아주세요.\nJSON만 반환: {"address":"서울 강남구 테헤란로 123"}`
-        );
-        const result2 = extractJSON(text2);
-        if (result2?.address && !isAddressIncomplete(normalizeAddr(result2.address))) {
-          normalizedAddr = normalizeAddr(result2.address);
-          source = "google";
-        }
-      } catch { /* 구글 실패시 기존 유지 */ }
+    // 채용 0건 → 삭제
+    if (hireCount === 0) {
+      return NextResponse.json({ noHire: true });
     }
 
-    // 주소 끝내 확인 불가 → noAddress 플래그
+    // ── STEP 2: 비즈노에서 주소 검색 ──
+    const biznoText = await callHaiku(
+      `비즈노에서 "${companyName}" 기업의 본사 주소를 찾으세요.
+URL: https://bizno.net/?query=${encodeURIComponent(companyName)}&gb=1
+본사 또는 본점 기준으로 동/로/길 단위까지 주소를 추출하세요.
+JSON만 반환: {"address":"서울 강남구 테헤란로 123"}`
+    );
+    const biznoResult = extractJSON(biznoText);
+    let normalizedAddr = biznoResult?.address?.trim() ? normalizeAddr(biznoResult.address) : "";
+
+    // 비즈노에서 상세 주소 나오면 STEP 3 스킵
+    if (isAddressIncomplete(normalizedAddr)) {
+      // ── STEP 3: 구글에서 주소 보완 (비즈노 실패시만) ──
+      const googleText = await callHaiku(
+        `구글에서 "${companyName} 본사 주소"를 검색해서 정확한 도로명 주소(동/로/길 포함)를 찾으세요.
+JSON만 반환: {"address":"서울 강남구 테헤란로 123"}`
+      );
+      const googleResult = extractJSON(googleText);
+      if (googleResult?.address?.trim()) {
+        const ga = normalizeAddr(googleResult.address);
+        if (!isAddressIncomplete(ga)) normalizedAddr = ga;
+      }
+    }
+
+    // 주소 끝내 미확인 → 삭제
     if (isAddressIncomplete(normalizedAddr)) {
       return NextResponse.json({ noAddress: true, hire_count: hireCount });
     }
@@ -82,7 +84,7 @@ JSON만 반환:
     const coords = coordsForRegion(normalizedAddr);
     const mate = coords ? findNearestMate(coords[0], coords[1]) : "";
 
-    return NextResponse.json({ address: normalizedAddr, hire_count: hireCount, mate, source });
+    return NextResponse.json({ address: normalizedAddr, hire_count: hireCount, mate });
 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
