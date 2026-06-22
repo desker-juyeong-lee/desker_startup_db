@@ -123,6 +123,8 @@ export default function Home() {
   const rowsRef=useRef<string[][]>([]);
   const cacheRef=useRef<Record<string,CacheEntry>>({});
   const fileInputRef=useRef<HTMLInputElement>(null);
+  // 당일 MATE별 배정 카운트 (30개 제한용)
+  const mateDailyCountRef=useRef<Record<string,number>>({});
 
   useEffect(()=>{
     // Supabase에서 전체 캐시 로드
@@ -277,15 +279,31 @@ export default function Home() {
       rowsRef.current[i]=[...rowsRef.current[i]];
       if(data.hire_count!==undefined) rowsRef.current[i][8]=String(data.hire_count);
       if(data.address) rowsRef.current[i][9]=data.address;
-      if(data.mate) rowsRef.current[i][10]=data.mate;
+      // mate는 아래에서 30개 제한 후 결정되므로 일단 빈칸 (아래서 채움)
       rowsRef.current[i][11]=today;
-      const entry:CacheEntry={address:data.address||"",hire_count:data.hire_count??0,mate:data.mate||"",date:today};
+      // 거리순 MATE 목록에서 30개 제한 적용
+      const matesByDist:string[] = data.matesByDist || (data.mate ? [data.mate] : []);
+      let assignedMate = "";
+      for (const candidate of matesByDist) {
+        const cnt = mateDailyCountRef.current[candidate] || 0;
+        if (cnt < 30) {
+          assignedMate = candidate;
+          mateDailyCountRef.current[candidate] = cnt + 1;
+          break;
+        }
+      }
+      // 모든 MATE가 30개 초과면 가장 가까운 MATE에 배정
+      if (!assignedMate && matesByDist.length > 0) assignedMate = matesByDist[0];
+
+      const entry:CacheEntry={address:data.address||"",hire_count:data.hire_count??0,mate:assignedMate,date:today};
       cacheRef.current[name]=entry;
       refreshCacheEntries();
       upsertCache(name, entry); // Supabase 비동기 저장
+      rowsRef.current[i][10]=assignedMate;
       setRows([...rowsRef.current]); calcMateCounts(rowsRef.current);
-      setRowStates(prev=>prev.map((s,idx)=>idx===i?{...s,status:"done",address:data.address,hire_count:data.hire_count,mate:data.mate}:s));
-      addLog(`  ✅ ${name} | 📍${data.address||"주소없음"} | 💼${data.hire_count}건 | 🏢${data.mate||"-"}`,"ok");
+      setRowStates(prev=>prev.map((s,idx)=>idx===i?{...s,status:"done",address:data.address,hire_count:data.hire_count,mate:assignedMate}:s));
+      const wasCapped = matesByDist.length>0 && assignedMate!==matesByDist[0] ? ` (1순위 초과→${assignedMate})` : "";
+      addLog(`  ✅ ${name} | 📍${data.address||"주소없음"} | 💼${data.hire_count}건 | 🏢${assignedMate||"-"}${wasCapped}`,"ok");
       setDoneCount(d=>d+1);
     }catch(e:unknown){
       const errMsg=e instanceof Error?e.message:String(e);
@@ -298,6 +316,12 @@ export default function Home() {
 
   async function runAll(){
     setRunning(true); stopRef.current=false; pauseRef.current=false; setDoneCount(0); setApiCallCount(0);
+    // 당일 이미 배정된 MATE 카운트 집계 (캐시 기반)
+    const dailyCount:Record<string,number>={};
+    Object.values(cacheRef.current).forEach(e=>{
+      if(e.date===today && e.mate) dailyCount[e.mate]=(dailyCount[e.mate]||0)+1;
+    });
+    mateDailyCountRef.current=dailyCount;
     const total=rowsRef.current.length;
     const snapshot=[...rowStates];
     let i=0;

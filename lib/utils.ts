@@ -63,6 +63,16 @@ export function findNearestMate(lat: number, lng: number): string {
   return best.name;
 }
 
+// 거리순 MATE 이름 목록 반환 (중복 이름 제거, 가까운 순)
+export function findMatesByDistance(lat: number, lng: number): string[] {
+  const dists = MATES.map(m => ({ name: m.name, dist: haversine(lat, lng, m.lat, m.lng) }));
+  dists.sort((a, b) => a.dist - b.dist);
+  const seen = new Set<string>();
+  return dists
+    .filter(m => { if (seen.has(m.name)) return false; seen.add(m.name); return true; })
+    .map(m => m.name);
+}
+
 export function coordsForRegion(region: string): [number, number] | null {
   if (!region) return null;
   if (REGION_COORDS[region]) return REGION_COORDS[region];

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { normalizeAddr, coordsForRegion, findNearestMate } from "@/lib/utils";
+import { normalizeAddr, coordsForRegion, findMatesByDistance } from "@/lib/utils";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 export const maxDuration = 60;
@@ -82,9 +82,10 @@ JSON만 반환: {"address":"서울 강남구 테헤란로 123"}`
     }
 
     const coords = coordsForRegion(normalizedAddr);
-    const mate = coords ? findNearestMate(coords[0], coords[1]) : "";
+    // 거리순 MATE 목록 전달 → page.tsx에서 30개 제한 적용
+    const matesByDist = coords ? findMatesByDistance(coords[0], coords[1]) : [];
 
-    return NextResponse.json({ address: normalizedAddr, hire_count: hireCount, mate });
+    return NextResponse.json({ address: normalizedAddr, hire_count: hireCount, matesByDist });
 
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
