@@ -4,7 +4,7 @@ import { normalizeAddr, coordsForRegion, findNearestMate } from "@/lib/utils";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export const maxDuration = 60; // Vercel 최대 60초
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const { companyName } = await req.json();
@@ -34,16 +34,17 @@ export async function POST(req: NextRequest) {
 - source: "bizno" | "nice" | "not_found"`;
 
   try {
-    const msg = await client.messages.create({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msg = await (client.messages.create as any)({
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
-      tools: [{ type: "web_search_20250305" as const, name: "web_search" }],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = msg.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map(b => b.text)
+    const text = (msg.content as Array<{type: string; text?: string}>)
+      .filter(b => b.type === "text")
+      .map(b => b.text ?? "")
       .join("\n")
       .replace(/```json|```/g, "")
       .trim();
@@ -53,7 +54,6 @@ export async function POST(req: NextRequest) {
 
     const result = JSON.parse(match[0]);
 
-    // 주소 → MATE 계산
     let mate = "";
     let normalizedAddr = "";
     if (result.address?.trim()) {
