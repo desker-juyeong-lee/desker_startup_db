@@ -39,8 +39,59 @@ function isAddressIncomplete(addr:string):boolean {
   return !/[동로길]/.test(addr);
 }
 
-function loadCache():Record<string,CacheEntry> { try{return JSON.parse(localStorage.getItem(CACHE_KEY)||"{}");}catch{return {};} }
-function saveCache(c:Record<string,CacheEntry>) { try{localStorage.setItem(CACHE_KEY,JSON.stringify(c));}catch{} }
+// ── Supabase 연동 ──────────────────────────────────────────────
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+async function fetchAllCache(): Promise<Record<string,CacheEntry>> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/startup_cache?select=company_name,address,mate,hire_count,updated_at&limit=10000`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return {};
+    const rows = await res.json();
+    const map: Record<string,CacheEntry> = {};
+    for (const r of rows) map[r.company_name] = { address: r.address||"", hire_count: r.hire_count||0, mate: r.mate||"", date: r.updated_at };
+    return map;
+  } catch { return {}; }
+}
+
+async function upsertCache(name: string, entry: CacheEntry): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/startup_cache`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({ company_name: name, address: entry.address, mate: entry.mate, hire_count: entry.hire_count, updated_at: entry.date }),
+    });
+  } catch {}
+}
+
+async function deleteCacheEntry(name: string): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/startup_cache?company_name=eq.${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+  } catch {}
+}
+
+async function clearAllCache(): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/startup_cache?id=gt.0`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+  } catch {}
+}
+
+// localStorage는 오프라인 fallback용으로만 유지
+function loadLocalCache():Record<string,CacheEntry> { try{return JSON.parse(localStorage.getItem(CACHE_KEY)||"{}");}catch{return {};} }
+function saveLocalCache(c:Record<string,CacheEntry>) { try{localStorage.setItem(CACHE_KEY,JSON.stringify(c));}catch{} }
 
 export default function Home() {
   const [rows,setRows]=useState<string[][]>([]);
@@ -60,6 +111,7 @@ export default function Home() {
   const [cacheSearch,setCacheSearch]=useState("");
   const [cacheEntries,setCacheEntries]=useState<[string,CacheEntry][]>([]);
   const [selectedMate,setSelectedMate]=useState<string|null>(null);
+  const [dbLoading,setDbLoading]=useState(false);
   const [analysisResult,setAnalysisResult]=useState<{
     total:number; valid:number; skipList:{name:string;reason:string}[];
     cacheHit:number; toFetch:number;
@@ -73,15 +125,32 @@ export default function Home() {
   const fileInputRef=useRef<HTMLInputElement>(null);
 
   useEffect(()=>{
-    const c=loadCache();
-    cacheRef.current=c;
-    setCacheSize(Object.keys(c).length);
-    setCacheEntries(Object.entries(c).sort((a,b)=>b[1].date.localeCompare(a[1].date)));
+    // Supabase에서 전체 캐시 로드
+    setDbLoading(true);
+    fetchAllCache().then(c=>{
+      // Supabase 결과가 비어있으면 localStorage fallback
+      if(Object.keys(c).length===0){
+        const local=loadLocalCache();
+        cacheRef.current=local;
+      } else {
+        cacheRef.current=c;
+        saveLocalCache(c); // 로컬에도 동기화
+      }
+      const entries=Object.entries(cacheRef.current).sort((a,b)=>b[1].date.localeCompare(a[1].date));
+      setCacheEntries(entries);
+      setCacheSize(entries.length);
+      const mc:Record<string,number>={};
+      entries.forEach(([,e])=>{if(e.mate)mc[e.mate]=(mc[e.mate]||0)+1;});
+      setMateCounts(mc);
+      setActiveTab("cache");
+      setDbLoading(false);
+    });
   },[]);
 
   function refreshCacheEntries(){
     const e=Object.entries(cacheRef.current).sort((a,b)=>b[1].date.localeCompare(a[1].date));
     setCacheEntries(e); setCacheSize(e.length);
+    saveLocalCache(cacheRef.current);
   }
 
   function calcMateCounts(r:string[][]){
@@ -210,8 +279,10 @@ export default function Home() {
       if(data.address) rowsRef.current[i][9]=data.address;
       if(data.mate) rowsRef.current[i][10]=data.mate;
       rowsRef.current[i][11]=today;
-      cacheRef.current[name]={address:data.address||"",hire_count:data.hire_count??0,mate:data.mate||"",date:today};
-      saveCache(cacheRef.current); refreshCacheEntries();
+      const entry:CacheEntry={address:data.address||"",hire_count:data.hire_count??0,mate:data.mate||"",date:today};
+      cacheRef.current[name]=entry;
+      refreshCacheEntries();
+      upsertCache(name, entry); // Supabase 비동기 저장
       setRows([...rowsRef.current]); calcMateCounts(rowsRef.current);
       setRowStates(prev=>prev.map((s,idx)=>idx===i?{...s,status:"done",address:data.address,hire_count:data.hire_count,mate:data.mate}:s));
       addLog(`  ✅ ${name} | 📍${data.address||"주소없음"} | 💼${data.hire_count}건 | 🏢${data.mate||"-"}`,"ok");
@@ -277,32 +348,40 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
-  function handleDeleteCacheEntry(name:string){delete cacheRef.current[name];saveCache(cacheRef.current);refreshCacheEntries();}
-  function handleClearCache(){if(!confirm(`캐시 ${cacheSize}개를 모두 삭제할까요?`))return;cacheRef.current={};saveCache({});refreshCacheEntries();addLog("🗑 캐시 초기화","warn");}
+  function handleDeleteCacheEntry(name:string){delete cacheRef.current[name];refreshCacheEntries();deleteCacheEntry(name);}
+  function handleClearCache(){if(!confirm(`캐시 ${cacheSize}개를 모두 삭제할까요?`))return;cacheRef.current={};refreshCacheEntries();clearAllCache();addLog("🗑 캐시 초기화","warn");}
 
   const total=rows.length;
   const procCount=rowStates.filter(s=>s.status==="proc").length;
   const validTotal=total-skippedCount;
   const pct=validTotal>0?Math.round(((doneCount+cachedCount)/validTotal)*100):0;
   const totalMateMatched=Object.values(mateCounts).reduce((a,b)=>a+b,0);
+  const displayTotal=total>0?total:cacheSize; // 파일 없으면 캐시 총수
   const maxMateCount=Math.max(...Object.values(mateCounts),1);
   const filteredCache=cacheSearch.trim()?cacheEntries.filter(([name,e])=>name.includes(cacheSearch)||e.address.includes(cacheSearch)||e.mate.includes(cacheSearch)):cacheEntries;
   const S=styles;
 
   // MATE별 구/동 분포 계산
   function getMateRegionBreakdown(mate:string){
-    const companies=rows.filter(r=>(r[10]||"").trim()===mate&&!(r[11]||"").includes("주소없음"));
+    // 파일 로드된 경우 rows 기반, 없으면 캐시 기반
+    let companies: string[][];
+    if(rows.length>0){
+      companies=rows.filter(r=>(r[10]||"").trim()===mate&&!(r[11]||"").includes("주소없음"));
+    } else {
+      // 캐시 기반 가상 rows 생성
+      companies=cacheEntries
+        .filter(([,e])=>e.mate===mate)
+        .map(([name,e])=>{const r=Array(12).fill(""); r[0]=name; r[8]=String(e.hire_count); r[9]=e.address; r[10]=e.mate; r[11]=e.date; return r;});
+    }
     const guCount:Record<string,string[]>={};
     const dongCount:Record<string,number>={};
     for(const r of companies){
       const addr=(r[9]||"").trim();
       const name=(r[0]||"").replace(/\n[\s\S]*/g,"").trim();
-      // 구 추출
       const guMatch=addr.match(/([가-힣]+구)/);
       const gu=guMatch?guMatch[1]:"미분류";
       if(!guCount[gu])guCount[gu]=[];
       guCount[gu].push(name);
-      // 동 추출
       const dongMatch=addr.match(/([가-힣]+동)/);
       const dong=dongMatch?dongMatch[1]:"";
       if(dong)dongCount[dong]=(dongCount[dong]||0)+1;
@@ -321,7 +400,9 @@ export default function Home() {
           </div>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:11,color:"#888",marginBottom:2}}>로컬 캐시</div>
-            <div style={{fontSize:18,fontWeight:600,color:"#534AB7",cursor:"pointer"}} onClick={()=>setActiveTab("cache")}>{cacheSize}개 →</div>
+            <div style={{fontSize:18,fontWeight:600,color:"#534AB7",cursor:"pointer"}} onClick={()=>setActiveTab("cache")}>
+              {dbLoading ? <span style={{fontSize:13,color:"#888"}}>DB 로딩 중...</span> : `${cacheSize}개 →`}
+            </div>
           </div>
         </div>
 
@@ -457,12 +538,12 @@ export default function Home() {
           </div>
         )}
 
-        {/* 탭 */}
+        {/* 탭 — 파일 없어도 캐시 기반 탭 항상 표시 */}
         <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:"1px solid #eee"}}>
           {([
             ["table","📋 기업 목록",total>0],
-            ["dashboard","📊 MATE 현황",total>0],
-            ["mate","🏢 MATE 상세",total>0],
+            ["dashboard",`📊 MATE 현황${total===0?" (캐시)":""}`,cacheSize>0||total>0],
+            ["mate",`🏢 MATE 상세${total===0?" (캐시)":""}`,cacheSize>0||total>0],
             ["cache",`💾 캐시 DB (${cacheSize})`,true],
           ] as [string,string,boolean][]).map(([tab,label,show])=>show&&(
             <button key={tab} onClick={()=>setActiveTab(tab as "table"|"dashboard"|"mate"|"cache")} style={{
@@ -507,10 +588,10 @@ export default function Home() {
         )}
 
         {/* ── 탭2: MATE 현황 (바 차트) ── */}
-        {activeTab==="dashboard"&&total>0&&(
+        {activeTab==="dashboard"&&(cacheSize>0||total>0)&&(
           <div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
-              {([["전체 기업",total+"개","#444"],["MATE 매칭",totalMateMatched+"개","#0a7c55"],["미매칭",(validTotal-totalMateMatched)+"개","#8a5200"]] as [string,string,string][]).map(([l,v,c])=>(
+              {([["전체 기업",displayTotal+"개","#444"],["MATE 매칭",totalMateMatched+"개","#0a7c55"],["미매칭",(displayTotal-totalMateMatched)+"개","#8a5200"]] as [string,string,string][]).map(([l,v,c])=>(
                 <div key={l} style={{background:"#f7f7f7",borderRadius:10,padding:"1rem"}}><div style={{fontSize:12,color:"#888",marginBottom:4}}>{l}</div><div style={{fontSize:24,fontWeight:700,color:c}}>{v}</div></div>
               ))}
             </div>
@@ -540,7 +621,7 @@ export default function Home() {
         )}
 
         {/* ── 탭3: MATE 상세 ── */}
-        {activeTab==="mate"&&total>0&&(
+        {activeTab==="mate"&&(cacheSize>0||total>0)&&(
           <div>
             {/* MATE 선택 버튼 */}
             <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
