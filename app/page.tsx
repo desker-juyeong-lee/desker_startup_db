@@ -11,10 +11,10 @@ const BATCH_SIZE = 10; // API 절약: 동시 10개로 줄임
 const BATCH_DELAY = 2000; // 배치 간 2초 딜레이 (rate limit 방지)
 const CACHE_KEY = "startup_db_cache";
 
-const MATE_ORDER = ["DM에스앤피","DM대전둔산2","DM오피스그룹","DM프로젝트오피스","DM드림OC","DM부산센텀","DM공간플러스","DM대구칠성","DM송파문정","DM광주남구2"];
+const MATE_ORDER = ["DM에스앤피","DM대전둔산2","DM오피스그룹","DM프로젝트오피스","DM드림OC","DM부산센텀","DM공간플러스","DM대구칠성","DM송파문정","DM광주남구2","DM더라이즈"];
 const MATE_COLORS:Record<string,string> = {
   "DM에스앤피":"#534AB7","DM대전둔산2":"#0F6E56","DM오피스그룹":"#993C1D","DM프로젝트오피스":"#185FA5",
-  "DM드림OC":"#854F0B","DM부산센텀":"#993556","DM공간플러스":"#3B6D11","DM대구칠성":"#636058","DM송파문정":"#A32D2D","DM광주남구2":"#0C447C",
+  "DM드림OC":"#854F0B","DM부산센텀":"#993556","DM공간플러스":"#3B6D11","DM대구칠성":"#636058","DM송파문정":"#A32D2D","DM광주남구2":"#0C447C","DM더라이즈":"#6B3FA0",
 };
 
 // 기업명 유효성 검증 + 이유 반환

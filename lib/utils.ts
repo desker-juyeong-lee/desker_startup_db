@@ -1,18 +1,35 @@
 export const MATES = [
-  { name: "DM에스앤피",       lat: 37.4812, lng: 126.8827 },
-  { name: "DM에스앤피",       lat: 37.5125, lng: 127.1025 },
-  { name: "DM대전둔산2",      lat: 36.3504, lng: 127.3845 },
-  { name: "DM오피스그룹",     lat: 37.5596, lng: 126.8321 },
-  { name: "DM프로젝트오피스", lat: 37.5745, lng: 126.9847 },
-  { name: "DM드림OC",         lat: 37.3935, lng: 127.1112 },
-  { name: "DM부산센텀",       lat: 35.1690, lng: 129.1299 },
-  { name: "DM공간플러스",     lat: 37.5038, lng: 127.1219 },
-  { name: "DM공간플러스",     lat: 37.5577, lng: 126.9238 },
-  { name: "DM대구칠성",       lat: 35.8573, lng: 128.6272 },
-  { name: "DM대구칠성",       lat: 35.8680, lng: 128.6016 },
-  { name: "DM송파문정",       lat: 37.5222, lng: 127.0394 },
-  { name: "DM광주남구2",      lat: 35.1367, lng: 126.9103 },
+  { name: "DM에스앤피",       lat: 37.4812, lng: 126.8827 }, // 서울 금천구 가산디지털1로 128
+  { name: "DM에스앤피",       lat: 37.5125, lng: 127.1025 }, // 서울 송파구 올림픽로 300
+  { name: "DM대전둔산2",      lat: 36.3504, lng: 127.3845 }, // 대전 서구 대덕대로168번길 32
+  { name: "DM오피스그룹",     lat: 37.5596, lng: 126.8321 }, // 서울 강서구 마곡동로10길 46
+  { name: "DM프로젝트오피스", lat: 37.5745, lng: 126.9847 }, // 서울 종로구 인사동5길 42
+  { name: "DM드림OC",         lat: 37.3935, lng: 127.1112 }, // 경기 성남시 수정구 대왕판교로 943
+  { name: "DM부산센텀",       lat: 35.1690, lng: 129.1299 }, // 부산 해운대구 해운대로 195
+  { name: "DM공간플러스",     lat: 37.5038, lng: 127.1219 }, // 서울 송파구 오금로 310
+  { name: "DM공간플러스",     lat: 37.5577, lng: 126.9238 }, // 서울 마포구 동교로25길 54
+  { name: "DM대구칠성",       lat: 35.8573, lng: 128.6272 }, // 대구 수성구 무학로 113
+  { name: "DM대구칠성",       lat: 35.8680, lng: 128.6016 }, // 대구 중구 달구벌대로 2077
+  { name: "DM송파문정",       lat: 37.5222, lng: 127.0394 }, // 서울 강남구 도산대로25길 21
+  { name: "DM광주남구2",      lat: 35.1367, lng: 126.9103 }, // 광주 남구 봉선로 16
+  { name: "DM더라이즈",       lat: 37.5568, lng: 126.9225 }, // 서울 마포구 양화로 78
 ];
+
+// 지방 우선 매칭 규칙
+const REGION_MATE_RULES: { keywords: string[]; mate: string }[] = [
+  { keywords: ["부산", "경상남도", "경남", "울산"], mate: "DM부산센텀" },
+  { keywords: ["대구", "경상북도", "경북"], mate: "DM대구칠성" },
+  { keywords: ["대전", "충청", "충남", "충북", "세종"], mate: "DM대전둔산2" },
+  { keywords: ["광주", "전라", "전남", "전북", "제주"], mate: "DM광주남구2" },
+];
+
+// 주소에서 지방 우선 매칭 MATE 반환 (없으면 null)
+export function getRegionMate(address: string): string | null {
+  for (const rule of REGION_MATE_RULES) {
+    if (rule.keywords.some(k => address.includes(k))) return rule.mate;
+  }
+  return null;
+}
 
 export const REGION_COORDS: Record<string, [number, number]> = {
   "서울 강남구": [37.5172, 127.0473], "서울 서초구": [37.4837, 127.0324],
@@ -42,6 +59,28 @@ export const REGION_COORDS: Record<string, [number, number]> = {
   "대구 달서구":   [35.8298, 128.5331],
   "광주 남구":     [35.1337, 126.9003], "광주 광산구": [35.1398, 126.7936],
   "인천 서구":     [37.5456, 126.6724], "인천 부평구": [37.5073, 126.7224],
+  "인천 미추홀구": [37.4638, 126.6508], "인천 남동구": [37.4469, 126.7314],
+  // 경남
+  "경남 창원시": [35.2279, 128.6811], "경남 진주시": [35.1797, 128.1076],
+  "경남 김해시": [35.2342, 128.8892], "경남 거제시": [34.8800, 128.6211],
+  // 경북
+  "경북 포항시": [36.0190, 129.3435], "경북 경주시": [35.8562, 129.2249],
+  "경북 구미시": [36.1195, 128.3446], "경북 안동시": [36.5684, 128.7294],
+  // 충청
+  "충남 천안시": [36.8151, 127.1139], "충남 아산시": [36.7898, 127.0022],
+  "충북 청주시": [36.6424, 127.4890], "충북 충주시": [36.9910, 127.9259],
+  "세종": [36.4800, 127.2890],
+  // 전라
+  "전남 여수시": [34.7604, 127.6622], "전남 순천시": [34.9506, 127.4872],
+  "전남 목포시": [34.8118, 126.3922],
+  "전북 전주시": [35.8242, 127.1480], "전북 익산시": [35.9483, 126.9577],
+  "전북 군산시": [35.9675, 126.7368],
+  // 제주
+  "제주": [33.4890, 126.4983], "제주시": [33.4996, 126.5312],
+  "서귀포시": [33.2541, 126.5600],
+  // 울산
+  "울산 남구": [35.5384, 129.3114], "울산 중구": [35.5695, 129.3317],
+  "울산 북구": [35.5823, 129.3610], "울산 동구": [35.5051, 129.4163],
 };
 
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -64,13 +103,23 @@ export function findNearestMate(lat: number, lng: number): string {
 }
 
 // 거리순 MATE 이름 목록 반환 (중복 이름 제거, 가까운 순)
-export function findMatesByDistance(lat: number, lng: number): string[] {
+// address가 주어지면 지방 우선 규칙 먼저 적용
+export function findMatesByDistance(lat: number, lng: number, address = ""): string[] {
+  // 지방 우선 매칭
+  const regionMate = getRegionMate(address);
+
   const dists = MATES.map(m => ({ name: m.name, dist: haversine(lat, lng, m.lat, m.lng) }));
   dists.sort((a, b) => a.dist - b.dist);
   const seen = new Set<string>();
-  return dists
+  const sorted = dists
     .filter(m => { if (seen.has(m.name)) return false; seen.add(m.name); return true; })
     .map(m => m.name);
+
+  // 지방 규칙 있으면 해당 MATE를 맨 앞으로
+  if (regionMate && sorted.includes(regionMate)) {
+    return [regionMate, ...sorted.filter(n => n !== regionMate)];
+  }
+  return sorted;
 }
 
 export function coordsForRegion(region: string): [number, number] | null {
