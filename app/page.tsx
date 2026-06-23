@@ -5,7 +5,7 @@ import { parseCSVText, toCSVText } from "@/lib/utils";
 
 type RowStatus = "wait"|"proc"|"done"|"error"|"cached"|"skip";
 interface RowState { name:string; status:RowStatus; address?:string; hire_count?:number; mate?:string; error?:string; }
-interface CacheEntry { address:string; hire_count:number; mate:string; date:string; }
+interface CacheEntry { address:string; hire_count:number; mate:string; date:string; adjusted?:boolean; originalMate?:string; }
 
 const today = new Date().toISOString().slice(0,10);
 const BATCH_SIZE = 10; // API 절약: 동시 10개로 줄임
@@ -106,6 +106,7 @@ export default function Home() {
   const [cachedCount,setCachedCount]=useState(0);
   const [cacheSize,setCacheSize]=useState(0);
   const [mateCounts,setMateCounts]=useState<Record<string,number>>({});
+  const [mateAdjCounts,setMateAdjCounts]=useState<Record<string,number>>({}); // *조정 카운트
   const [activeTab,setActiveTab]=useState<"table"|"dashboard"|"mate"|"cache">("table");
   const [skippedCount,setSkippedCount]=useState(0);
   const [apiCallCount,setApiCallCount]=useState(0);
@@ -126,6 +127,7 @@ export default function Home() {
   const fileInputRef=useRef<HTMLInputElement>(null);
   // 당일 MATE별 배정 카운트 (30개 제한용)
   const mateDailyCountRef=useRef<Record<string,number>>({});
+  const mateThresholdRef=useRef<number>(30); // 평균×2 임계값 (기본 30)
 
   useEffect(()=>{
     setDbLoading(true);
@@ -164,8 +166,17 @@ export default function Home() {
 
   function calcMateCounts(r:string[][]){
     const c:Record<string,number>={};
-    for(const row of r){const m=(row[10]||"").trim();if(m)c[m]=(c[m]||0)+1;}
+    const adj:Record<string,number>={};
+    for(const row of r){
+      const raw=(row[10]||"").trim();
+      if(!raw) continue;
+      const isAdj=raw.endsWith("*");
+      const m=isAdj?raw.slice(0,-1):raw;
+      c[m]=(c[m]||0)+1;
+      if(isAdj) adj[m]=(adj[m]||0)+1;
+    }
     setMateCounts(c);
+    setMateAdjCounts(adj);
   }
 
   const addLog=useCallback((msg:string,type="")=>{setLogs(l=>[...l.slice(-300),{msg,type}]);},[]);
@@ -288,29 +299,39 @@ export default function Home() {
       if(data.address) rowsRef.current[i][9]=data.address;
       // mate는 아래에서 30개 제한 후 결정되므로 일단 빈칸 (아래서 채움)
       rowsRef.current[i][11]=today;
-      // 거리순 MATE 목록에서 30개 제한 적용
+      // 거리순 MATE 목록에서 평균×2 임계값 적용
       const matesByDist:string[] = data.matesByDist || (data.mate ? [data.mate] : []);
+      const threshold = mateThresholdRef.current;
+      const originalMate = matesByDist[0] || "";
       let assignedMate = "";
+      let isAdjusted = false;
       for (const candidate of matesByDist) {
         const cnt = mateDailyCountRef.current[candidate] || 0;
-        if (cnt < 30) {
+        if (cnt < threshold) {
           assignedMate = candidate;
           mateDailyCountRef.current[candidate] = cnt + 1;
+          if (candidate !== originalMate) isAdjusted = true;
           break;
         }
       }
-      // 모든 MATE가 30개 초과면 가장 가까운 MATE에 배정
-      if (!assignedMate && matesByDist.length > 0) assignedMate = matesByDist[0];
+      if (!assignedMate && matesByDist.length > 0) { assignedMate = matesByDist[0]; }
 
-      const entry:CacheEntry={address:data.address||"",hire_count:data.hire_count??0,mate:assignedMate,date:today};
+      const entry:CacheEntry={
+        address:data.address||"",hire_count:data.hire_count??0,
+        mate: isAdjusted ? assignedMate+"*" : assignedMate,
+        date:today,
+        adjusted:isAdjusted,
+        originalMate:isAdjusted?originalMate:undefined,
+      };
       cacheRef.current[name]=entry;
       refreshCacheEntries();
       upsertCache(name, entry); // Supabase 비동기 저장
-      rowsRef.current[i][10]=assignedMate;
+      const displayMate = isAdjusted ? assignedMate+"*" : assignedMate;
+      rowsRef.current[i][10]=displayMate;
       setRows([...rowsRef.current]); calcMateCounts(rowsRef.current);
-      setRowStates(prev=>prev.map((s,idx)=>idx===i?{...s,status:"done",address:data.address,hire_count:data.hire_count,mate:assignedMate}:s));
-      const wasCapped = matesByDist.length>0 && assignedMate!==matesByDist[0] ? ` (1순위 초과→${assignedMate})` : "";
-      addLog(`  ✅ ${name} | 📍${data.address||"주소없음"} | 💼${data.hire_count}건 | 🏢${assignedMate||"-"}${wasCapped}`,"ok");
+      setRowStates(prev=>prev.map((s,idx)=>idx===i?{...s,status:"done",address:data.address,hire_count:data.hire_count,mate:displayMate}:s));
+      const adjNote = isAdjusted ? ` ⚖ 조정: ${originalMate}→${assignedMate}*` : "";
+      addLog(`  ✅ ${name} | 📍${data.address||"주소없음"} | 💼${data.hire_count}건 | 🏢${displayMate||"-"}${adjNote}`,"ok");
       setDoneCount(d=>d+1);
     }catch(e:unknown){
       const errMsg=e instanceof Error?e.message:String(e);
@@ -323,12 +344,19 @@ export default function Home() {
 
   async function runAll(){
     setRunning(true); stopRef.current=false; pauseRef.current=false; setDoneCount(0); setApiCallCount(0);
-    // 당일 이미 배정된 MATE 카운트 집계 (캐시 기반)
+    // 당일 이미 배정된 MATE 카운트 집계
     const dailyCount:Record<string,number>={};
     Object.values(cacheRef.current).forEach(e=>{
       if(e.date===today && e.mate) dailyCount[e.mate]=(dailyCount[e.mate]||0)+1;
     });
     mateDailyCountRef.current=dailyCount;
+    // 당일 평균 계산 → 2배 초과 시 재배정 임계값
+    const dailyTotal=Object.values(dailyCount).reduce((a,b)=>a+b,0);
+    const activeMates=Object.keys(dailyCount).length||MATE_ORDER.length;
+    const dailyAvg=dailyTotal/activeMates;
+    // 임계값: 평균의 2배 (최소 2)
+    mateThresholdRef.current=Math.max(2, Math.round(dailyAvg*2));
+    addLog(`📊 당일 평균 매칭 ${dailyAvg.toFixed(1)}개 → 임계값 ${mateThresholdRef.current}개 (평균×2)`,"info");
     const total=rowsRef.current.length;
     const snapshot=[...rowStates];
     let i=0;
@@ -626,28 +654,66 @@ export default function Home() {
                 <div key={l} style={{background:"#f7f7f7",borderRadius:10,padding:"1rem"}}><div style={{fontSize:12,color:"#888",marginBottom:4}}>{l}</div><div style={{fontSize:24,fontWeight:700,color:c}}>{v}</div></div>
               ))}
             </div>
-            <div style={{background:"#fafafa",borderRadius:10,padding:"1.25rem",border:"1px solid #eee",marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#333",marginBottom:16}}>MATE별 매칭 기업 수</div>
-              <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                {MATE_ORDER.map(mate=>{
-                  const count=mateCounts[mate]||0;
-                  const barPct=Math.round((count/maxMateCount)*100);
-                  const color=MATE_COLORS[mate]||"#888";
-                  return(
-                    <div key={mate} style={{cursor:"pointer"}} onClick={()=>{setSelectedMate(mate);setActiveTab("mate");}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                        <span style={{fontSize:12,color:"#444",fontWeight:500,minWidth:150}}>{mate}</span>
-                        <span style={{fontSize:13,fontWeight:700,color,minWidth:32,textAlign:"right"}}>{count}개</span>
-                      </div>
-                      <div style={{height:10,background:"#eee",borderRadius:5,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:count>0?Math.max(barPct,2)+"%":"0%",background:color,borderRadius:5,transition:"width .4s"}} />
-                      </div>
+            {(()=>{
+              const activeKeys=MATE_ORDER.filter(m=>mateCounts[m]>0);
+              const dayTotal=activeKeys.reduce((a,m)=>a+(mateCounts[m]||0),0);
+              const avg=activeKeys.length>0?dayTotal/activeKeys.length:0;
+              const threshold=Math.max(2,Math.round(avg*2));
+              const totalAdj=Object.values(mateAdjCounts).reduce((a,b)=>a+b,0);
+              return(
+                <div style={{background:"#fafafa",borderRadius:10,padding:"1.25rem",border:"1px solid #eee",marginBottom:20}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <div style={{fontSize:13,fontWeight:600,color:"#333"}}>MATE별 매칭 기업 수</div>
+                    {totalAdj>0&&<div style={{fontSize:11,background:"#FAEEDA",color:"#854F0B",borderRadius:99,padding:"2px 10px"}}>⚖ {totalAdj}개 재배정됨</div>}
+                  </div>
+                  {avg>0&&(
+                    <div style={{fontSize:11,color:"#888",marginBottom:12}}>
+                      당일 평균 <strong style={{color:"#534AB7"}}>{avg.toFixed(1)}개</strong> · 임계값(평균×2) <strong style={{color:"#854F0B"}}>{threshold}개</strong> 초과 시 ⚖ 재배정
                     </div>
-                  );
-                })}
-              </div>
-              <div style={{fontSize:11,color:"#aaa",marginTop:12}}>바 클릭 시 상세 보기로 이동</div>
-            </div>
+                  )}
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    {MATE_ORDER.map(mate=>{
+                      const count=mateCounts[mate]||0;
+                      const adjCount=mateAdjCounts[mate]||0;
+                      const barPct=Math.round((count/maxMateCount)*100);
+                      const avgPct=maxMateCount>0?Math.round((avg/maxMateCount)*100):0;
+                      const threshPct=maxMateCount>0?Math.round((threshold/maxMateCount)*100):0;
+                      const color=MATE_COLORS[mate]||"#888";
+                      const isOver=avg>0&&count>threshold;
+                      return(
+                        <div key={mate} style={{cursor:"pointer"}} onClick={()=>{setSelectedMate(mate);setActiveTab("mate");}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                            <span style={{fontSize:12,color:isOver?"#854F0B":"#444",fontWeight:500,minWidth:150}}>
+                              {mate}{isOver?" ⚠":""}
+                            </span>
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              {adjCount>0&&<span style={{fontSize:11,background:"#FAEEDA",color:"#854F0B",borderRadius:99,padding:"1px 7px"}}>⚖ {adjCount}개*</span>}
+                              <span style={{fontSize:13,fontWeight:700,color:isOver?"#854F0B":color,minWidth:32,textAlign:"right"}}>{count}개</span>
+                            </div>
+                          </div>
+                          <div style={{height:10,background:"#eee",borderRadius:5,overflow:"hidden",position:"relative"}}>
+                            <div style={{height:"100%",width:count>0?Math.max(barPct,2)+"%":"0%",background:isOver?"#EF9F27":color,borderRadius:5,transition:"width .4s"}} />
+                            {/* 평균선 */}
+                            {avg>0&&<div style={{position:"absolute",top:0,left:Math.min(avgPct,98)+"%",width:"1.5px",height:"100%",background:"#534AB7",opacity:0.6}} />}
+                            {/* 임계값선 */}
+                            {avg>0&&<div style={{position:"absolute",top:0,left:Math.min(threshPct,98)+"%",width:"1.5px",height:"100%",background:"#854F0B",opacity:0.5,borderStyle:"dashed"}} />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {avg>0&&(
+                    <div style={{display:"flex",gap:16,marginTop:10,fontSize:11,color:"#888"}}>
+                      <span><span style={{display:"inline-block",width:10,height:2,background:"#534AB7",verticalAlign:"middle",marginRight:4}}></span>평균</span>
+                      <span><span style={{display:"inline-block",width:10,height:2,background:"#854F0B",verticalAlign:"middle",marginRight:4}}></span>임계값(평균×2)</span>
+                      <span style={{color:"#854F0B"}}>⚠ 임계값 초과</span>
+                      <span style={{color:"#854F0B"}}>⚖ 재배정된 기업</span>
+                    </div>
+                  )}
+                  <div style={{fontSize:11,color:"#aaa",marginTop:8}}>바 클릭 시 상세 보기로 이동</div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -702,9 +768,14 @@ export default function Home() {
                     <tbody>
                       {companies.map((r,ci)=>{
                         const name=(r[0]||"").replace(/\n[\s\S]*/g,"").trim();
+                        const rawMate=(r[10]||"").trim();
+                        const isAdj=rawMate.endsWith("*");
                         return(
-                          <tr key={ci} style={{background:ci%2===0?"white":"#fafafa"}}>
-                            <td style={{...S.td,fontWeight:500,maxWidth:160}}>{name}</td>
+                          <tr key={ci} style={{background:isAdj?"#fffbe6":ci%2===0?"white":"#fafafa"}}>
+                            <td style={{...S.td,fontWeight:500,maxWidth:160}}>
+                              {name}
+                              {isAdj&&<span style={{fontSize:10,background:"#FAEEDA",color:"#854F0B",borderRadius:4,padding:"1px 5px",marginLeft:5}}>⚖*</span>}
+                            </td>
                             <td style={{...S.td,maxWidth:180}}>{r[9]||"-"}</td>
                             <td style={{...S.td,textAlign:"center"}}>
                               <span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:99,padding:"1px 10px",fontSize:11,fontWeight:600}}>{r[8]||"0"}건</span>
