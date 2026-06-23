@@ -1,4 +1,5 @@
 "use client";
+import { SEED_DATA } from "@/lib/seed";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { parseCSVText, toCSVText } from "@/lib/utils";
 
@@ -127,17 +128,23 @@ export default function Home() {
   const mateDailyCountRef=useRef<Record<string,number>>({});
 
   useEffect(()=>{
-    // Supabase에서 전체 캐시 로드
     setDbLoading(true);
-    fetchAllCache().then(c=>{
-      // Supabase 결과가 비어있으면 localStorage fallback
+    fetchAllCache().then(async c=>{
+      // Supabase 비어있으면 seed 데이터 자동 삽입
       if(Object.keys(c).length===0){
-        const local=loadLocalCache();
-        cacheRef.current=local;
+        const seedMap:Record<string,CacheEntry>={};
+        for(const s of SEED_DATA){
+          seedMap[s.company_name]={address:s.address,hire_count:s.hire_count,mate:s.mate,date:s.updated_at};
+        }
+        // Supabase에 일괄 upsert
+        await Promise.all(
+          Object.entries(seedMap).map(([name,entry])=>upsertCache(name,entry))
+        );
+        cacheRef.current=seedMap;
       } else {
         cacheRef.current=c;
-        saveLocalCache(c); // 로컬에도 동기화
       }
+      saveLocalCache(cacheRef.current);
       const entries=Object.entries(cacheRef.current).sort((a,b)=>b[1].date.localeCompare(a[1].date));
       setCacheEntries(entries);
       setCacheSize(entries.length);
