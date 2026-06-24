@@ -170,6 +170,7 @@ export default function Home() {
   const [apiCallCount,setApiCallCount]=useState(0);
   const [cacheSearch,setCacheSearch]=useState("");
   const [pasteMode,setPasteMode]=useState(false);
+  const [showGuide,setShowGuide]=useState(false);
   const [pasteText,setPasteText]=useState("");
   const [forestData,setForestData]=useState<{name:string;desc:string;stage:string;investment:string;revenue:string;employees:string;}[]>([]);
   const [cacheEntries,setCacheEntries]=useState<[string,CacheEntry][]>([]);
@@ -577,11 +578,101 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 업로드 */}
-        <div style={S.dropZone} onClick={()=>fileInputRef.current?.click()} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)handleFile(f);}}>
-          <div style={{fontSize:28,marginBottom:4}}>📂</div>
-          <div style={{fontSize:14,color:"#666"}}>CSV 파일 드래그 또는 클릭하여 업로드</div>
-          <input ref={fileInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);}} />
+        {/* 업로드 — CSV / 텍스트 붙여넣기 탭 */}
+        <div style={{border:"0.5px solid var(--color-border-tertiary)",borderRadius:10,overflow:"hidden",marginBottom:"1.25rem"}}>
+          {/* 탭 헤더 */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"0.5px solid var(--color-border-tertiary)",background:"var(--color-background-secondary)"}}>
+            <div style={{display:"flex"}}>
+              {([["csv","📂 CSV 파일"],["paste","📋 혁신의숲 텍스트 붙여넣기"]] as [string,string][]).map(([mode,label])=>(
+                <button key={mode} onClick={()=>{setPasteMode(mode==="paste");setPasteText("");}} style={{
+                  background:"none",border:"none",
+                  borderBottom:(!pasteMode&&mode==="csv")||(pasteMode&&mode==="paste")?"2px solid #534AB7":"2px solid transparent",
+                  color:(!pasteMode&&mode==="csv")||(pasteMode&&mode==="paste")?"#534AB7":"#888",
+                  fontWeight:(!pasteMode&&mode==="csv")||(pasteMode&&mode==="paste")?600:400,
+                  fontSize:13,padding:"10px 16px",cursor:"pointer",marginBottom:-1,whiteSpace:"nowrap",
+                }}>{label}</button>
+              ))}
+            </div>
+            {/* 물음표 가이드 버튼 */}
+            <button onClick={()=>setShowGuide(g=>!g)} style={{
+              background:showGuide?"#534AB7":"transparent",
+              color:showGuide?"white":"#888",
+              border:"0.5px solid",borderColor:showGuide?"#534AB7":"var(--color-border-secondary)",
+              borderRadius:"50%",width:24,height:24,fontSize:13,fontWeight:600,
+              cursor:"pointer",marginRight:12,lineHeight:1,flexShrink:0,
+            }}>?</button>
+          </div>
+          {/* 가이드 패널 */}
+          {showGuide&&(
+            <div style={{background:"#EEEDFE",borderBottom:"0.5px solid #AFA9EC",padding:"14px 16px"}}>
+              <div style={{fontSize:13,fontWeight:500,color:"#3C3489",marginBottom:10}}>혁신의숲 데이터 가져오는 방법</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {([
+                  ["1","혁신의숲 접속","innovforest.com → 상단 메뉴 데이터룸 클릭"],
+                  ["2","기업 리스트 조회","원하는 필터 조건 적용 후 기업 목록 확인"],
+                  ["3","전체 드래그 복사","기업 목록 전체를 마우스로 드래그 → Ctrl+C (Mac: ⌘+C)"],
+                  ["4","텍스트 붙여넣기 탭","위 탭에서 📋 혁신의숲 텍스트 붙여넣기 선택"],
+                  ["5","붙여넣기 후 파싱","텍스트란에 Ctrl+V → ▶ 파싱 시작 클릭"],
+                ] as [string,string,string][]).map(([num,title,desc])=>(
+                  <div key={num} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                    <div style={{width:20,height:20,borderRadius:"50%",background:"#534AB7",color:"white",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>{num}</div>
+                    <div>
+                      <div style={{fontSize:12,fontWeight:500,color:"#26215C"}}>{title}</div>
+                      <div style={{fontSize:11,color:"#534AB7",marginTop:1}}>{desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:12,padding:"8px 10px",background:"rgba(255,255,255,0.6)",borderRadius:6,fontSize:11,color:"#3C3489"}}>
+                💡 기업명·기업설명·최종투자단계·누적투자금액·매출액·고용인원이 자동으로 파싱됩니다
+              </div>
+            </div>
+          )}
+          {/* CSV 탭 */}
+          {!pasteMode&&(
+            <div style={{padding:"1.25rem",textAlign:"center",cursor:"pointer",background:"var(--color-background-primary)"}}
+              onClick={()=>fileInputRef.current?.click()}
+              onDragOver={e=>e.preventDefault()}
+              onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)handleFile(f);}}>
+              <div style={{fontSize:28,marginBottom:4}}>📂</div>
+              <div style={{fontSize:14,color:"var(--color-text-secondary)"}}>CSV 파일 드래그 또는 클릭하여 업로드</div>
+              <input ref={fileInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);}} />
+            </div>
+          )}
+          {/* 텍스트 붙여넣기 탭 */}
+          {pasteMode&&(
+            <div style={{padding:"1rem",background:"var(--color-background-primary)"}}>
+              <div style={{fontSize:12,color:"var(--color-text-secondary)",marginBottom:6}}>
+                혁신의숲에서 기업 목록을 드래그 선택 후 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V)
+              </div>
+              <textarea
+                value={pasteText}
+                onChange={e=>setPasteText(e.target.value)}
+                placeholder={"기업명	기업설명	최종투자단계	누적투자금액	매출액	고용인원
+에이치아이티오토모티브
+에이치아이티오토모티브
+자동차 프레스 금형 및 3차원 측정 솔루션 등을 제공하는 기업
+비공개	30.0억원
+264.0억원	-
+..."}
+                style={{width:"100%",height:130,border:"0.5px solid var(--color-border-secondary)",borderRadius:8,padding:"8px 10px",fontSize:12,fontFamily:"monospace",resize:"vertical",boxSizing:"border-box",background:"var(--color-background-secondary)",color:"var(--color-text-primary)",outline:"none"}}
+              />
+              <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                <button style={{background:"#534AB7",color:"white",border:"none",borderRadius:8,padding:"0 1.1rem",height:34,fontSize:13,cursor:"pointer",fontWeight:500}}
+                  onClick={()=>{if(pasteText.trim())handleForestPaste(pasteText);}}>
+                  ▶ 파싱 시작
+                </button>
+                <button style={{background:"transparent",color:"var(--color-text-secondary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:8,padding:"0 1rem",height:34,fontSize:13,cursor:"pointer"}}
+                  onClick={()=>{setPasteText("");}}>
+                  지우기
+                </button>
+                <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>
+                  {pasteText.trim() ? `${pasteText.split('
+').filter(l=>l.trim()).length}줄 입력됨` : "텍스트를 붙여넣으면 기업 목록이 자동 파싱됩니다"}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 통계 */}
