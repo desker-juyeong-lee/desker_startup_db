@@ -400,22 +400,29 @@ export default function Home() {
   }
 
   function handleFile(file:File){
-    // 1차: UTF-8 시도 → 한글 깨지면 EUC-KR로 재시도
-    const tryRead = (encoding: string) => {
+    if(file.name.match(/\.xlsx?$/i)){
+      const reader=new FileReader();
+      reader.onload=(e)=>{
+        const data=e.target?.result as string;
+        const wb=XLSX.read(data,{type:"binary"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const rows:string[][]=XLSX.utils.sheet_to_json(ws,{header:1,defval:"",raw:false}) as string[][];
+        if(rows.length<2) return;
+        processCSVRows(rows);
+      };
+      reader.readAsBinaryString(file);
+      return;
+    }
+    const tryRead=(encoding:string)=>{
       const reader=new FileReader();
       reader.onload=(e)=>{
         const text=e.target?.result as string;
-        // BOM 제거 후 깨짐 감지: 전체 텍스트에 replacement char(U+FFFD)가 많으면 인코딩 오류
-        const clean = text.replace(/^\uFEFF/,"");
-        const brokenRatio = (clean.match(/\uFFFD/g)||[]).length / Math.max(clean.length,1);
-        if(encoding==="UTF-8" && brokenRatio > 0.01){
-          // UTF-8 깨짐 → EUC-KR 재시도
-          tryRead("EUC-KR");
-          return;
-        }
+        const clean=text.replace(/^\uFEFF/,"");
+        const brokenRatio=(clean.match(/\uFFFD/g)||[]).length/Math.max(clean.length,1);
+        if(encoding==="UTF-8"&&brokenRatio>0.01){tryRead("EUC-KR");return;}
         processCSVRows(parseCSVText(clean));
       };
-      reader.readAsText(file, encoding);
+      reader.readAsText(file,encoding);
     };
     tryRead("UTF-8");
   }
@@ -683,7 +690,7 @@ export default function Home() {
               onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)handleFile(f);}}>
               <div style={{fontSize:28,marginBottom:4}}>📂</div>
               <div style={{fontSize:14,color:"var(--color-text-secondary)"}}>CSV 파일 드래그 또는 클릭하여 업로드</div>
-              <input ref={fileInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);}} />
+              <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);}} />
             </div>
           )}
           {/* 텍스트 붙여넣기 탭 */}
