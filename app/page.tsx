@@ -648,9 +648,7 @@ export default function Home() {
               <textarea
                 value={pasteText}
                 onChange={e=>setPasteText(e.target.value)}
-                placeholder={"기업명	기업설명	최종투자단계...
-에이치아이티오토모티브
-자동차 프레스 금형..."}
+                placeholder="예시: 에이치아이티오토모티브 / 자동차 프레스 금형 및 3차원 측정 솔루션..."
                 style={{width:"100%",height:130,border:"0.5px solid var(--color-border-secondary)",borderRadius:8,padding:"8px 10px",fontSize:12,fontFamily:"monospace",resize:"vertical",boxSizing:"border-box",background:"var(--color-background-secondary)",color:"var(--color-text-primary)",outline:"none"}}
               />
               <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
