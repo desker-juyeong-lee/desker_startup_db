@@ -18,6 +18,64 @@ const MATE_COLORS:Record<string,string> = {
   "DM드림OC":"#854F0B","DM부산센텀":"#993556","DM공간플러스":"#3B6D11","DM대구칠성":"#636058","DM송파문정":"#A32D2D","DM광주남구2":"#0C447C","DM더라이즈":"#6B3FA0",
 };
 
+// ── 혁신의숲 붙여넣기 텍스트 파서 ──────────────────────────────
+function parseForestText(raw: string): {
+  name: string; desc: string; stage: string; investment: string; revenue: string; employees: string;
+}[] {
+  const lines = raw.split(/\n/).map(l => l.replace(/\t/g, ' ').trim()).filter(l => l.length > 0);
+  const results: { name:string; desc:string; stage:string; investment:string; revenue:string; employees:string; }[] = [];
+  let i = 0;
+
+  // 헤더 행 스킵
+  const headerKw = ['기업명','기업설명','최종투자단계','누적투자금액','매출액','고용인원'];
+  if (lines[0] && headerKw.some(k => lines[0].includes(k))) i++;
+
+  while (i < lines.length) {
+    const name = lines[i]?.trim();
+    if (!name || name.length < 2) { i++; continue; }
+
+    // 기업명이 2번 반복되는 패턴 처리
+    let desc = '';
+    let nextI = i + 1;
+
+    // 다음 줄이 같은 이름이면 스킵 (중복)
+    if (lines[nextI]?.trim() === name) nextI++;
+    // 부제목(서비스명 등) 스킵 — 기업설명은 "~기업"으로 끝나거나 길이 20 이상
+    while (nextI < lines.length) {
+      const l = lines[nextI].trim();
+      if (l.endsWith('기업') || l.endsWith('기업.') || l.length > 15) break;
+      nextI++; // 짧은 부제목 스킵
+    }
+    desc = lines[nextI]?.trim() || '';
+    if (desc.endsWith('기업') || desc.length > 15) nextI++;
+    else desc = '';
+
+    // 나머지 필드 (최종투자단계, 누적투자, 매출액+고용인원)
+    const stage = lines[nextI]?.trim() || '-';
+    nextI++;
+    const investment = lines[nextI]?.trim() || '-';
+    nextI++;
+
+    // 마지막 행: "매출액\t고용인원" 또는 "매출액 고용인원" 합쳐진 경우
+    const lastLine = lines[nextI]?.trim() || '';
+    let revenue = '-', employees = '-';
+    if (lastLine.includes(' ')) {
+      const parts = lastLine.split(/\s+/);
+      revenue = parts[0] || '-';
+      employees = parts[parts.length - 1] || '-';
+    } else {
+      revenue = lastLine || '-';
+    }
+    nextI++;
+
+    if (name && name.length >= 2 && !headerKw.some(k => name.includes(k))) {
+      results.push({ name, desc, stage, investment, revenue, employees });
+    }
+    i = nextI;
+  }
+  return results;
+}
+
 // 기업명 유효성 검증 + 이유 반환
 function getSkipReason(name:string):string|null {
   if(!name||name.trim().length===0) return "빈 값";
@@ -111,6 +169,9 @@ export default function Home() {
   const [skippedCount,setSkippedCount]=useState(0);
   const [apiCallCount,setApiCallCount]=useState(0);
   const [cacheSearch,setCacheSearch]=useState("");
+  const [pasteMode,setPasteMode]=useState(false);
+  const [pasteText,setPasteText]=useState("");
+  const [forestData,setForestData]=useState<{name:string;desc:string;stage:string;investment:string;revenue:string;employees:string;}[]>([]);
   const [cacheEntries,setCacheEntries]=useState<[string,CacheEntry][]>([]);
   const [selectedMate,setSelectedMate]=useState<string|null>(null);
   const [dbLoading,setDbLoading]=useState(false);
@@ -237,6 +298,57 @@ export default function Home() {
     setAnalysisConfirmed(false);
     setAnalysisResult({total:dataRows.length, valid:dataRows.length-skipList.length-dupSkipCount, skipList, cacheHit, toFetch:toFetch-dupSkipCount, duplicates});
     addLog(`분석 완료: 전체 ${dataRows.length}행 → 유효 ${dataRows.length-skipList.length-dupSkipCount}개 | 삭제 ${skipList.length}개 | 중복제거 ${dupSkipCount}개 | 캐시 ${cacheHit}개 | 신규조회 ${toFetch-dupSkipCount}개`,"ok");
+  }
+
+  function handleForestPaste(text: string) {
+    const parsed = parseForestText(text);
+    if (parsed.length === 0) { addLog("파싱 실패: 기업 데이터를 찾지 못했습니다","err"); return; }
+    setForestData(parsed);
+
+    // rows 구조로 변환 (기존 파이프라인 재사용)
+    // 열: 0=기업명, 1=기업설명, 2=최종투자단계, 3=누적투자금액, 4=매출액, 5=고용인원, ...8=채용건수, 9=본사지역, 10=MATE, 11=업데이트
+    const hdr = ["기업명","기업설명","최종투자단계","누적투자금액","매출액","고용인원","","","최근 1년 채용건수","본사 지역","MATE 매칭","업데이트 일자"];
+    setHeader(hdr);
+
+    const dataRows = parsed.map(p => {
+      const r = Array(12).fill("");
+      r[0] = p.name; r[1] = p.desc; r[2] = p.stage;
+      r[3] = p.investment; r[4] = p.revenue; r[5] = p.employees;
+      return r;
+    });
+    rowsRef.current = dataRows;
+
+    const cache = cacheRef.current;
+    let preHit = 0, skipped = 0;
+    const initStates: RowState[] = dataRows.map((r, i) => {
+      const name = r[0].trim();
+      const skipReason = getSkipReason(name);
+      if (skipReason) { skipped++; return { name, status: "skip" }; }
+      const cached = cache[name];
+      if (cached) {
+        rowsRef.current[i][8] = String(cached.hire_count);
+        rowsRef.current[i][9] = cached.address;
+        rowsRef.current[i][10] = cached.mate;
+        rowsRef.current[i][11] = cached.date + "(캐시)";
+        preHit++;
+        return { name, status: "cached", address: cached.address, hire_count: cached.hire_count, mate: cached.mate };
+      }
+      return { name, status: "wait" };
+    });
+
+    setRows([...rowsRef.current]); setRowStates(initStates); calcMateCounts(rowsRef.current);
+    setLogs([]); setDoneCount(0); setErrCount(0); setCachedCount(preHit); setSkippedCount(skipped); setApiCallCount(0);
+    setAnalysisConfirmed(false);
+
+    const dupNames: Record<string,number> = {};
+    initStates.forEach(s => { if(s.status!=="skip"&&s.name) dupNames[s.name]=(dupNames[s.name]||0)+1; });
+    const duplicates = Object.entries(dupNames).filter(([,c])=>c>1).map(([name,count])=>({name,count}));
+    setAnalysisResult({
+      total: dataRows.length, valid: dataRows.length - skipped,
+      skipList: [], cacheHit: preHit, toFetch: dataRows.length - skipped - preHit, duplicates,
+    });
+    addLog(`혁신의숲 데이터 파싱: ${parsed.length}개 기업 | 캐시: ${preHit}개 | 신규: ${dataRows.length-skipped-preHit}개`, "ok");
+    setPasteMode(false); setPasteText("");
   }
 
   function handleFile(file:File){
@@ -760,32 +872,51 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* 기업 테이블 */}
-                  <table style={{...S.table,fontSize:12}}>
+                  {/* 기업 테이블 — 최종 CSV 구조 */}
+                  <div style={{overflowX:"auto"}}>
+                  <table style={{...S.table,fontSize:12,minWidth:900}}>
                     <thead><tr>
-                      {["기업명","본사 지역","최근 1년 채용건수","업데이트 일자"].map(h=><th key={h} style={S.th}>{h}</th>)}
+                      {["기업명","기업설명","최종투자단계","누적투자금액","매출액","고용인원","카테고리","채용건수","본사 지역"].map(h=><th key={h} style={S.th}>{h}</th>)}
                     </tr></thead>
                     <tbody>
                       {companies.map((r,ci)=>{
                         const name=(r[0]||"").replace(/\n[\s\S]*/g,"").trim();
                         const rawMate=(r[10]||"").trim();
                         const isAdj=rawMate.endsWith("*");
+                        // 캐시 기반일 때 추가 정보 병합
+                        const cached=cacheRef.current[name];
+                        const desc=r[1]||"";
+                        const stage=r[2]||"-";
+                        const invest=r[3]||"-";
+                        const rev=r[4]||"-";
+                        const emp=r[5]||"-";
+                        const cat=r[7]||"-";
+                        const hire=r[8]||"0";
+                        const addr=r[9]||(cached?.address||"-");
                         return(
                           <tr key={ci} style={{background:isAdj?"#fffbe6":ci%2===0?"white":"#fafafa"}}>
-                            <td style={{...S.td,fontWeight:500,maxWidth:160}}>
+                            <td style={{...S.td,fontWeight:500,minWidth:100,whiteSpace:"nowrap"}}>
                               {name}
-                              {isAdj&&<span style={{fontSize:10,background:"#FAEEDA",color:"#854F0B",borderRadius:4,padding:"1px 5px",marginLeft:5}}>⚖*</span>}
+                              {isAdj&&<span style={{fontSize:10,background:"#FAEEDA",color:"#854F0B",borderRadius:4,padding:"1px 5px",marginLeft:4}}>⚖</span>}
                             </td>
-                            <td style={{...S.td,maxWidth:180}}>{r[9]||"-"}</td>
+                            <td style={{...S.td,maxWidth:220,whiteSpace:"normal",lineHeight:1.4,fontSize:11,color:"#555"}}>{desc||"-"}</td>
+                            <td style={{...S.td,whiteSpace:"nowrap",textAlign:"center"}}>
+                              {stage!=="-"?<span style={{background:"#EEEDFE",color:"#534AB7",borderRadius:99,padding:"1px 8px",fontSize:11}}>{stage}</span>:"-"}
+                            </td>
+                            <td style={{...S.td,whiteSpace:"nowrap",textAlign:"right",color:"#185FA5"}}>{invest}</td>
+                            <td style={{...S.td,whiteSpace:"nowrap",textAlign:"right"}}>{rev}</td>
+                            <td style={{...S.td,whiteSpace:"nowrap",textAlign:"center"}}>{emp}</td>
+                            <td style={{...S.td,maxWidth:140,fontSize:11,color:"#666"}}>{cat}</td>
                             <td style={{...S.td,textAlign:"center"}}>
-                              <span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:99,padding:"1px 10px",fontSize:11,fontWeight:600}}>{r[8]||"0"}건</span>
+                              <span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:99,padding:"1px 8px",fontSize:11,fontWeight:600}}>{hire}건</span>
                             </td>
-                            <td style={{...S.td,whiteSpace:"nowrap",color:"#888",fontSize:11}}>{(r[11]||"-").replace("(캐시)","")}</td>
+                            <td style={{...S.td,minWidth:120,fontSize:11,color:"#666"}}>{addr}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               );
             })}
