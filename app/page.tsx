@@ -246,12 +246,56 @@ export default function Home() {
 
   function processCSVRows(parsed: string[][]) {
     if(parsed.length<2) return;
-    const hdr=[...parsed[0]];
-    while(hdr.length<12)hdr.push("");
-    hdr[8]=hdr[8]||"최근 1년 채용건수"; hdr[9]=hdr[9]||"본사 지역"; hdr[10]=hdr[10]||"MATE 매칭"; hdr[11]=hdr[11]||"업데이트 일자";
-    setHeader(hdr);
-    const dataRows=parsed.slice(1).map(r=>{while(r.length<12)r.push("");return r;});
-    rowsRef.current=dataRows.map(r=>[...r]);
+
+    // ── 헤더명으로 열 인덱스 동적 탐색 (칸밀림 방지) ──
+    const rawHdr = parsed[0].map(h => String(h||"").trim());
+    const findCol = (...names: string[]) => {
+      for(const n of names){
+        const i = rawHdr.findIndex(h => h.includes(n));
+        if(i >= 0) return i;
+      }
+      return -1;
+    };
+    const COL = {
+      name:       findCol("기업명"),
+      desc:       findCol("기업설명"),
+      stage:      findCol("최종투자단계","투자단계"),
+      investment: findCol("누적투자","투자금액"),
+      revenue:    findCol("매출액"),
+      employees:  findCol("고용인원"),
+      category:   findCol("카테고리"),
+      keyword:    findCol("키워드"),
+      hire:       findCol("채용건수","채용 건수"),
+      address:    findCol("본사 지역","본사지역"),
+      mate:       findCol("MATE"),
+      updated:    findCol("업데이트"),
+    };
+
+    // 표준 12열 구조로 재매핑
+    // [0]=기업명 [1]=기업설명 [2]=최종투자단계 [3]=누적투자금액 [4]=매출액 [5]=고용인원
+    // [6]=카테고리 [7]=키워드 [8]=채용건수 [9]=본사지역 [10]=MATE [11]=업데이트
+    const STD_HDR = ["기업명","기업설명","최종투자단계","누적투자금액","매출액","고용인원","카테고리","키워드","최근 1년 채용건수","본사 지역","MATE 매칭","업데이트 일자"];
+    setHeader(STD_HDR);
+
+    const get = (row: string[], col: number) => col >= 0 ? String(row[col]||"").trim() : "";
+
+    const dataRows = parsed.slice(1).map(r => {
+      const nr = Array(12).fill("");
+      nr[0]  = get(r, COL.name);
+      nr[1]  = get(r, COL.desc);
+      nr[2]  = get(r, COL.stage);
+      nr[3]  = get(r, COL.investment);
+      nr[4]  = get(r, COL.revenue);
+      nr[5]  = get(r, COL.employees);
+      nr[6]  = get(r, COL.category);
+      nr[7]  = get(r, COL.keyword);
+      nr[8]  = get(r, COL.hire);
+      nr[9]  = get(r, COL.address);
+      nr[10] = get(r, COL.mate);
+      nr[11] = get(r, COL.updated);
+      return nr;
+    });
+    rowsRef.current = dataRows.map(r=>[...r]);
     const cache=cacheRef.current;
 
     // ── 분석 단계: 삭제/캐시/신규 분류 ──
