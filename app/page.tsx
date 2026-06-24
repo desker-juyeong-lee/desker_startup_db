@@ -277,22 +277,25 @@ export default function Home() {
     const STD_HDR = ["기업명","기업설명","최종투자단계","누적투자금액","매출액","고용인원","카테고리","키워드","최근 1년 채용건수","본사 지역","MATE 매칭","업데이트 일자"];
     setHeader(STD_HDR);
 
-    const get = (row: string[], col: number) => col >= 0 ? String(row[col]||"").trim() : "";
+    const get = (row: string[], col: number) => col >= 0 && col < row.length ? String(row[col]||"").trim() : "";
+
+    // 헤더에서 기업명 열을 못 찾으면 0번 열을 기업명으로 사용
+    if(COL.name < 0) COL.name = 0;
 
     const dataRows = parsed.slice(1).map(r => {
       const nr = Array(12).fill("");
-      nr[0]  = get(r, COL.name);
-      nr[1]  = get(r, COL.desc);
-      nr[2]  = get(r, COL.stage);
-      nr[3]  = get(r, COL.investment);
-      nr[4]  = get(r, COL.revenue);
-      nr[5]  = get(r, COL.employees);
-      nr[6]  = get(r, COL.category);
-      nr[7]  = get(r, COL.keyword);
-      nr[8]  = get(r, COL.hire);
-      nr[9]  = get(r, COL.address);
-      nr[10] = get(r, COL.mate);
-      nr[11] = get(r, COL.updated);
+      nr[0]  = get(r, COL.name);       // 기업명
+      nr[1]  = get(r, COL.desc);       // 기업설명
+      nr[2]  = get(r, COL.stage);      // 최종투자단계
+      nr[3]  = get(r, COL.investment); // 누적투자금액
+      nr[4]  = get(r, COL.revenue);    // 매출액
+      nr[5]  = get(r, COL.employees);  // 고용인원
+      nr[6]  = get(r, COL.category);   // 카테고리
+      nr[7]  = get(r, COL.keyword);    // 키워드
+      nr[8]  = get(r, COL.hire);       // 채용건수 (없으면 빈값 → 나중에 API로 채움)
+      nr[9]  = get(r, COL.address);    // 본사지역 (없으면 빈값 → API로 채움)
+      nr[10] = get(r, COL.mate);       // MATE (없으면 빈값 → 자동 배정)
+      nr[11] = get(r, COL.updated);    // 업데이트일자
       return nr;
     });
     rowsRef.current = dataRows.map(r=>[...r]);
