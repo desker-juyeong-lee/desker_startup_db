@@ -2,6 +2,7 @@
 import { SEED_DATA } from "@/lib/seed";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { parseCSVText, toCSVText } from "@/lib/utils";
+import * as XLSX from "xlsx";
 
 type RowStatus = "wait"|"proc"|"done"|"error"|"cached"|"skip";
 interface RowState { name:string; status:RowStatus; address?:string; hire_count?:number; mate?:string; error?:string; }
@@ -243,8 +244,7 @@ export default function Home() {
 
   const addLog=useCallback((msg:string,type="")=>{setLogs(l=>[...l.slice(-300),{msg,type}]);},[]);
 
-  function processCSVText(text: string) {
-    const parsed=parseCSVText(text);
+  function processCSVRows(parsed: string[][]) {
     if(parsed.length<2) return;
     const hdr=[...parsed[0]];
     while(hdr.length<12)hdr.push("");
@@ -366,7 +366,7 @@ export default function Home() {
           tryRead("EUC-KR");
           return;
         }
-        processCSVText(clean);
+        processCSVRows(parseCSVText(clean));
       };
       reader.readAsText(file, encoding);
     };
