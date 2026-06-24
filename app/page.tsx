@@ -660,10 +660,7 @@ export default function Home() {
                   onClick={()=>{setPasteText("");}}>
                   지우기
                 </button>
-                <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>
-                  {pasteText.trim() ? `${pasteText.split('
-').filter(l=>l.trim()).length}줄 입력됨` : "텍스트를 붙여넣으면 기업 목록이 자동 파싱됩니다"}
-                </span>
+                <span style={{fontSize:11,color:"var(--color-text-secondary)"}}>{pasteText.trim() ? pasteText.trim().split(/\r?\n/).filter(Boolean).length + "줄 입력됨" : "텍스트를 붙여넣으면 기업 목록이 자동 파싱됩니다"}</span>
               </div>
             </div>
           )}
