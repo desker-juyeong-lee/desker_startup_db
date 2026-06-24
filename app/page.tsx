@@ -13,6 +13,9 @@ const BATCH_SIZE = 10; // API 절약: 동시 10개로 줄임
 const BATCH_DELAY = 2000; // 배치 간 2초 딜레이 (rate limit 방지)
 const CACHE_KEY = "startup_db_cache";
 
+// 지방 전용 MATE (해당 지역 기업만 배정, 수도권 overflow 불가)
+const REGIONAL_MATES = new Set(["DM부산센텀","DM대전둔산2","DM대구칠성","DM광주남구2"]);
+
 const MATE_ORDER = ["DM에스앤피","DM대전둔산2","DM오피스그룹","DM프로젝트오피스","DM드림OC","DM부산센텀","DM공간플러스","DM대구칠성","DM송파문정","DM광주남구2","DM더라이즈"];
 const MATE_COLORS:Record<string,string> = {
   "DM에스앤피":"#534AB7","DM대전둔산2":"#0F6E56","DM오피스그룹":"#993C1D","DM프로젝트오피스":"#185FA5",
@@ -470,9 +473,15 @@ export default function Home() {
       const matesByDist:string[] = data.matesByDist || (data.mate ? [data.mate] : []);
       const threshold = mateThresholdRef.current;
       const originalMate = matesByDist[0] || "";
+
+      // 수도권 기업 여부 판단 (지방 MATE가 1순위가 아니면 수도권)
+      const isRegional = originalMate ? REGIONAL_MATES.has(originalMate) : false;
+
       let assignedMate = "";
       let isAdjusted = false;
       for (const candidate of matesByDist) {
+        // 수도권 기업은 지방 전용 MATE 건너뜀
+        if (!isRegional && REGIONAL_MATES.has(candidate)) continue;
         const cnt = mateDailyCountRef.current[candidate] || 0;
         if (cnt < threshold) {
           assignedMate = candidate;
@@ -481,7 +490,12 @@ export default function Home() {
           break;
         }
       }
-      if (!assignedMate && matesByDist.length > 0) { assignedMate = matesByDist[0]; }
+      // 모두 초과 시 지방 제외하고 가장 가까운 수도권 MATE에 강제 배정
+      if (!assignedMate) {
+        assignedMate = isRegional
+          ? (matesByDist[0] || "")
+          : (matesByDist.find(m => !REGIONAL_MATES.has(m)) || matesByDist[0] || "");
+      }
 
       const entry:CacheEntry={
         address:data.address||"",hire_count:data.hire_count??0,
